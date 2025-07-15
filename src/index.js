@@ -5,7 +5,6 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const { body, validationResult } = require("express-validator");
 const dotenv = require("dotenv");
-const WebSocket = require("ws");
 
 dotenv.config();
 
@@ -19,30 +18,9 @@ mongoose
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error("MongoDB connection error:", err));
 
-// WebSocket Server Setup
-const wss = new WebSocket.Server({ port: process.env.WS_PORT || 8080 });
-const clients = new Map(); // Store connected clients with user IDs
-
-wss.on("connection", (ws, req) => {
-  // Extract JWT from query parameter
-  const urlParams = new URLSearchParams(req.url.split("?")[1]);
-  const token = urlParams.get("token");
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    clients.set(decoded.userId, ws); // Map user ID to WebSocket connection
-
-    ws.on("close", () => {
-      clients.delete(decoded.userId); // Remove client on disconnect
-    });
-  } catch (error) {
-    ws.close(); // Close connection if token is invalid
-  }
-});
-
 // Schemas
 const UserSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true, index: true },
   password: { type: String, required: true },
   isPremium: { type: Boolean, default: false },
   role: { type: String, enum: ["user", "admin"], default: "user" },
@@ -53,7 +31,7 @@ const SignalSchema = new mongoose.Schema({
   title: String,
   description: String,
   type: { type: String, enum: ["free", "premium"], required: true },
-  createdAt: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now, index: true },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 });
 
@@ -68,7 +46,7 @@ const FeedSchema = new mongoose.Schema({
       createdAt: { type: Date, default: Date.now },
     },
   ],
-  createdAt: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now, index: true },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 });
 
@@ -275,35 +253,25 @@ app.post("/api/signals", authMiddleware, adminMiddleware, async (req, res) => {
     });
 
     await signal.save();
-
-    // Broadcast signal to appropriate clients
-    clients.forEach((client, userId) => {
-      User.findById(userId).then((user) => {
-        if (
-          user &&
-          (type === "free" || (type === "premium" && user.isPremium))
-        ) {
-          client.send(
-            JSON.stringify({
-              type: "signal",
-              data: signal,
-            })
-          );
-        }
-      });
-    });
-
     res.status(201).json(signal);
   } catch (error) {
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// Get Signals (Filtered by user tier)
+// Get Signals (Filtered by user tier, with optional 'since' query)
 app.get("/api/signals", authMiddleware, async (req, res) => {
   try {
+    const { since } = req.query;
     const query = req.user.isPremium ? {} : { type: "free" };
-    const signals = await Signal.find(query).populate("createdBy", "email");
+
+    if (since) {
+      query.createdAt = { $gt: new Date(since) };
+    }
+
+    const signals = await Signal.find(query)
+      .populate("createdBy", "email")
+      .sort({ createdAt: -1 });
     res.json(signals);
   } catch (error) {
     res.status(500).json({ error: "Server error" });
@@ -329,27 +297,19 @@ app.post("/api/feed", authMiddleware, adminMiddleware, async (req, res) => {
     });
 
     await feedPost.save();
-
-    // Broadcast feed post to all connected clients
-    clients.forEach((client) => {
-      client.send(
-        JSON.stringify({
-          type: "feed",
-          data: feedPost,
-        })
-      );
-    });
-
     res.status(201).json(feedPost);
   } catch (error) {
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// Get Feed Posts
+// Get Feed Posts (with optional 'since' query)
 app.get("/api/feed", authMiddleware, async (req, res) => {
   try {
-    const feedPosts = await Feed.find()
+    const { since } = req.query;
+    const query = since ? { createdAt: { $gt: new Date(since) } } : {};
+
+    const feedPosts = await Feed.find(query)
       .populate("createdBy", "email")
       .populate("comments.user", "email")
       .sort({ createdAt: -1 });
@@ -375,17 +335,6 @@ app.post("/api/feed/:id/like", authMiddleware, async (req, res) => {
     }
 
     await feedPost.save();
-
-    // Broadcast like update to all connected clients
-    clients.forEach((client) => {
-      client.send(
-        JSON.stringify({
-          type: "feed_update",
-          data: feedPost,
-        })
-      );
-    });
-
     res.json(feedPost);
   } catch (error) {
     res.status(500).json({ error: "Server error" });
@@ -411,17 +360,6 @@ app.post("/api/feed/:id/comment", authMiddleware, async (req, res) => {
     });
 
     await feedPost.save();
-
-    // Broadcast comment update to all connected clients
-    clients.forEach((client) => {
-      client.send(
-        JSON.stringify({
-          type: "feed_update",
-          data: feedPost,
-        })
-      );
-    });
-
     res.json(feedPost);
   } catch (error) {
     res.status(500).json({ error: "Server error" });
