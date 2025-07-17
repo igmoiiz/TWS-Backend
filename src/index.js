@@ -19,40 +19,9 @@ mongoose
   .catch((err) => console.error("MongoDB connection error:", err));
 
 // Schemas
-const UserSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true, index: true },
-  password: { type: String, required: true },
-  isPremium: { type: Boolean, default: false },
-  role: { type: String, enum: ["user", "admin"], default: "user" },
-  createdAt: { type: Date, default: Date.now },
-});
-
-const SignalSchema = new mongoose.Schema({
-  title: String,
-  description: String,
-  type: { type: String, enum: ["free", "premium"], required: true },
-  createdAt: { type: Date, default: Date.now, index: true },
-  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-});
-
-const FeedSchema = new mongoose.Schema({
-  imageUrl: { type: String, required: true },
-  caption: { type: String, required: true },
-  likes: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-  comments: [
-    {
-      user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-      text: String,
-      createdAt: { type: Date, default: Date.now },
-    },
-  ],
-  createdAt: { type: Date, default: Date.now, index: true },
-  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-});
-
-const User = mongoose.model("User", UserSchema);
-const Signal = mongoose.model("Signal", SignalSchema);
-const Feed = mongoose.model("Feed", FeedSchema);
+const User = require('./models/user.model.js');
+const Signal = require('./models/signal.model.js');
+const Feed = require('./models/feed.model.js');
 
 // Middleware for Authentication
 const authMiddleware = async (req, res, next) => {
